@@ -22,7 +22,9 @@ size_t _num_allocated_blocks();
 size_t _num_allocated_bytes();
 size_t _size_meta_data();
 size_t _num_meta_data_bytes();
-MallocMetadata* _get_head();
-MallocMetadata* _get_tail();
+MallocMetadata* _get_block_head();
+MallocMetadata* _get_block_tail();
+MallocMetadata* _get_mmap_head();
+MallocMetadata* _get_mmap_tail();
 
 #endif //HW4_MALLOC_2_H
