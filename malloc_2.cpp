@@ -1,6 +1,8 @@
 #include <unistd.h>
 #include <cstring>
 
+#define MAX_BLOCK_SIZE 100000000
+
 struct MallocMetadata {
     size_t size;
     bool is_free;
@@ -9,57 +11,44 @@ struct MallocMetadata {
 
 };
 
-static MallocMetadata* head= nullptr;
-static size_t num_free_blocks=0;
-static size_t num_alloc_blocks=0;
-static size_t num_free_bytes=0;
-static size_t num_alloc_bytes=0;
 
 
-size_t _num_free_blocks() {return num_free_blocks;}
-size_t _num_free_bytes() {return num_free_bytes;}
-size_t _num_allocated_blocks() {return num_alloc_blocks;}
-size_t _num_allocated_bytes() {return num_alloc_bytes;}
+static MallocMetadata* block_head= nullptr;
+static MallocMetadata* block_tail= nullptr;
+
+
 size_t _size_meta_data() {return sizeof(MallocMetadata);}
-size_t _num_meta_data_bytes() {
-    return _size_meta_data()*_num_allocated_blocks();
-}
+
 
 
 
 void * smalloc(size_t size) {
-    if(size==0 || size > 100000000)
+    if(size==0 || size > MAX_BLOCK_SIZE)
         return nullptr;
-    MallocMetadata* curr= head;
-    MallocMetadata* tail=nullptr;
+    MallocMetadata* curr= block_head;
     while(curr){
         if(curr->is_free && curr->size >= size){
             curr->is_free=false;
-            num_free_blocks--;
-            num_free_bytes-=curr->size;
-            return (char*) curr + _size_meta_data();
+            return (MallocMetadata*) curr + 1;
         }
-        if(!curr->next)
-            tail=curr;
         curr=curr->next;
 
     }
     void* p = sbrk(size+ _size_meta_data());
     if(*(int*)p==-1)
         return nullptr;
-    auto* new_node =(MallocMetadata*) p;//TODO: check if works
-    num_alloc_blocks++;
-    num_alloc_bytes+=size;
-    if(!head)
-        head=new_node;
+    auto new_node =(MallocMetadata*) p;
+    if(!block_head)
+        block_head=new_node;
     new_node->size=size;
     new_node->is_free=false;
-    new_node->prev=tail;
+    new_node->prev=block_tail;
     new_node->next=nullptr;
-    if(tail)
-        tail->next=new_node;
+    if(block_tail)
+        block_tail->next=new_node;
+    block_tail=new_node;
 
-    return (char*)p + _size_meta_data();
+    return (MallocMetadata*)p + 1;
 
 }
 
@@ -73,92 +62,76 @@ void* scalloc(size_t num, size_t size){
 }
 void sfree(void* p){
     if(!p) return;
-    auto* metadata = (MallocMetadata*) ((char*) p - _size_meta_data()); //TODO: check if works, try while
+    auto* metadata = (MallocMetadata*)p-1;
     metadata->is_free=true;
-    num_free_blocks++;
-    num_free_bytes+=metadata->size;
 }
 
 void* srealloc(void* oldp, size_t size){
-    if(size==0 || size > 100000000)
+    if(size==0 || size > MAX_BLOCK_SIZE)
         return nullptr;
-    auto* metadata = (MallocMetadata*) ((char*) oldp - _size_meta_data());
+    if(!oldp)
+        return smalloc(size);
+
+    auto *metadata = (MallocMetadata *) oldp -1;
     if(metadata->size>=size)
         return oldp;
-    void* new_aloc= smalloc(size);
-    if(!new_aloc)
+    void* new_alloc= smalloc(size);
+    if(!new_alloc)
         return nullptr;
-    if(oldp) {
-        std::memcpy(new_aloc, oldp, size);
-        sfree(oldp);
-    }
-    return new_aloc;
+
+    std::memcpy(new_alloc, oldp, size);
+    sfree(oldp);
+    return new_alloc;
 }
 
-MallocMetadata* _get_head(){
-    return head;
+MallocMetadata* _get_block_head(){
+    return block_head;
 }
 
-MallocMetadata* _get_tail(){
-    MallocMetadata* curr=head;
-    if(!curr) return nullptr;
-    while(curr->next){
-        curr=curr->next;
-    }
-    return curr;
+MallocMetadata* _get_block_tail(){
+    return block_tail;
 }
 
-/*
-class Heap{
-public:
-    static Heap& getInstance(){
-        static Heap instance;
-        return instance;
-    }
-    Heap(Heap const&)           = delete;
-    void operator=(Heap const&) = delete;
-    static void* smalloc(size_t size);
-    void* scalloc(size_t num, size_t size);
-    void* sfree(void* p);
-    void* srealloc(void* oldp, size_t size);
-    size_t get_num_of_free_blocks() {return num_free_blocks;};           //5
-    size_t get_num_of_alloc_blocks() {return num_alloc_blocks;};         //6
-    size_t get_num_of_free_bytes() {return num_free_bytes;};             //7
-    size_t get_num_of_alloc_bytes() {return num_alloc_bytes;};           //8
-    size_t get_num_metadata_bytes() {                                       //9
-        return _size_meta_data()*get_num_of_alloc_blocks();
-    };
-    static size_t _size_meta_data() {return sizeof(MallocMetadata);};
 
-private:
-    MallocMetadata* head;
-    size_t num_free_blocks;
-    size_t num_alloc_blocks;
-    size_t num_free_bytes;
-    size_t num_alloc_bytes;
-    Heap(): head(nullptr) {}
-
-};
-
-
-void* smalloc(size_t size){
-    return Heap::getInstance().smalloc(size);
-}
-void* scalloc(size_t num, size_t size){
-    return Heap::getInstance().scalloc(num, size);
-}
-void* sfree(void* p){
-    return Heap::getInstance().sfree(p);
-}
-void* srealloc(void* oldp, size_t size){
-    return Heap::getInstance().srealloc(oldp, size);
-}
 size_t _num_free_blocks() {
-
+    unsigned int counter=0;
+    auto curr=block_head;
+    while(curr) {
+        if (curr->is_free)
+            counter++;
+        curr = curr->next;
+    }
+    return counter;
 }
-size_t get_num_of_alloc_blocks() {return num_alloc_blocks;};         //6
-size_t get_num_of_free_bytes() {return num_free_bytes;};             //7
-size_t get_num_of_alloc_bytes() {return num_alloc_bytes;};           //8
-size_t get_num_metadata_bytes() {                                       //9
+size_t _num_free_bytes() {
+    unsigned int counter=0;
+    auto curr=block_head;
+    while(curr) {
+        if (curr->is_free)
+            counter += curr->size;
+        curr = curr->next;
+    }
+    return counter;
+}
+size_t _num_allocated_blocks() {
+    unsigned int counter=0;
+    auto curr=block_head;
+    while(curr){
+        counter++;
+        curr = curr->next;
+    }
+    return counter;
+}
+size_t _num_allocated_bytes() {
+    unsigned int counter=0;
+    auto curr=block_head;
+    while(curr){
+        counter+=curr->size;
+        curr = curr->next;
+    }
+    return counter;
+}
 
-    */
+size_t _num_meta_data_bytes() {
+    return _size_meta_data()*_num_allocated_blocks();
+}

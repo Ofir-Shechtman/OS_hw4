@@ -5,14 +5,15 @@
 #define MAX_BLOCK_SIZE 100000000
 #define SPLIT_MIN 128
 #define MMAP_THRESHOLD (128*1024)
+#define ALIGN(size) (size+size%8)
 
 struct MallocMetadata {
     size_t size;
     bool is_free;
     MallocMetadata* next;
     MallocMetadata* prev;
-
 };
+
 
 static MallocMetadata* _split(MallocMetadata *pMetadata, size_t size);
 static void _merge_adj_frees(MallocMetadata *pMetadata);
@@ -38,6 +39,7 @@ void* _enlarged_wilderness(size_t size) {
 }
 
 void * smalloc(size_t size) {
+    size=ALIGN(size);
     if(size==0 || size > MAX_BLOCK_SIZE)
         return nullptr;
     if(size>=MMAP_THRESHOLD){
@@ -148,6 +150,7 @@ static MallocMetadata * _merge_blocks(MallocMetadata *first, MallocMetadata *sec
 }
 
 void* srealloc(void* oldp, size_t size){
+    size=ALIGN(size);
     if(size==0 || size > MAX_BLOCK_SIZE)
         return nullptr;
     if(oldp) {
@@ -166,7 +169,7 @@ void* srealloc(void* oldp, size_t size){
 
         if (size < MMAP_THRESHOLD) {
             if (metadata->prev && metadata->prev->is_free && metadata->size +
-                metadata->prev->size + _size_meta_data() >= size) { //b
+                                                             metadata->prev->size + _size_meta_data() >= size) { //b
                 _merge_blocks(metadata->prev, metadata);
                 std::memcpy( metadata->prev + 1, metadata + 1, metadata->size);
                 metadata->prev->is_free = false;
@@ -175,7 +178,7 @@ void* srealloc(void* oldp, size_t size){
             }
 
             if (metadata->next && metadata->next->is_free && metadata->size +
-                metadata->next->size + _size_meta_data() >= size) { //c
+                                                             metadata->next->size + _size_meta_data() >= size) { //c
                 _merge_blocks(metadata, metadata->next);
                 _split(metadata, size);
                 return metadata + 1;
@@ -183,7 +186,7 @@ void* srealloc(void* oldp, size_t size){
 
             if (metadata->prev && metadata->next && metadata->next->is_free &&
                 metadata->prev->is_free && metadata->size +
-                metadata->prev->size + metadata->next->size + _size_meta_data()*2 >= size) { //d
+                                           metadata->prev->size + metadata->next->size + _size_meta_data()*2 >= size) { //d
                 MallocMetadata *first = _merge_blocks(metadata->prev,
                                                       metadata);
                 _merge_blocks(first, metadata->next);
